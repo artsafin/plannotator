@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { NO_BROWSER } from '../helpers/no-browser';
 import { TOUCH_SELECTION_SETTLE_MS } from '../../packages/ui/utils/touchSelection';
 import { inboxScratch, removeInboxScratch } from './inbox-scratch';
+import { finger } from './phone-touch';
 
 async function withDocument(page: Page, markdown: string, check: () => Promise<void>) {
   const root = inboxScratch('plannotator-toolbar-');
@@ -122,6 +123,43 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
 
 test.describe('mobile native selection', () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  test('edge-swiped panels cover the bottom toolbar and release it when closed', async ({ page }) => {
+    await withDocument(page, documentText, async () => {
+      const toolbar = page.locator('[data-pn-native-selection-toolbar]');
+      await expect(toolbar).toBeVisible();
+      const box = (await toolbar.boundingBox())!;
+      const points = [0.15, 0.5, 0.85].map(fraction => ({ x: box.x + box.width * fraction, y: box.y + box.height / 2 }));
+      const topSurface = () => page.evaluate(samples => samples.map(point => {
+        const hit = document.elementFromPoint(point.x, point.y);
+        if (hit?.closest('#pn-compact-plan-navigator')) return 'navigator';
+        if (hit?.closest('[data-pn-compact-plan-stage]')) return 'panel';
+        if (hit?.closest('[data-pn-native-selection-toolbar]')) return 'toolbar';
+        return 'other';
+      }), points);
+      expect(await topSurface()).toEqual(['toolbar', 'toolbar', 'toolbar']);
+      const touch = await finger(page, 'chromium');
+      await touch.down(8, 200, 120, 0);
+      await touch.up();
+      const navigator = page.locator('#pn-compact-plan-navigator');
+      await expect(navigator).toBeVisible();
+      // Hit-testing at the toolbar's original position checks real stacking, not just z-index values.
+      await expect.poll(topSurface).toEqual(['navigator', 'navigator', 'navigator']);
+      await touch.down(200, 200, -120, 0);
+      await touch.up();
+      await expect(navigator).toHaveCount(0);
+      expect(await topSurface()).toEqual(['toolbar', 'toolbar', 'toolbar']);
+
+      await touch.down(382, 200, -120, 0);
+      await touch.up();
+      const annotations = page.getByRole('dialog', { name: 'Annotations', exact: true });
+      await expect(annotations).toBeVisible();
+      await expect.poll(topSurface).toEqual(['panel', 'panel', 'panel']);
+      await annotations.getByRole('button', { name: 'Close Annotations', exact: true }).tap();
+      await expect(page.locator('[data-pn-compact-plan-stage]')).toHaveCount(0);
+      expect(await topSurface()).toEqual(['toolbar', 'toolbar', 'toolbar']);
+    });
+  });
+
   test('selection remains native while ranges change and every action works through a real tap', async ({ page }) => {
     await withDocument(page, documentText, async () => {
       const toolbar = page.locator('[data-pn-native-selection-toolbar]');

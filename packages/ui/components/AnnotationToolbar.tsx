@@ -287,6 +287,8 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
       ? 'annotation-toolbar-out 0.15s ease-in forwards'
       : 'annotation-toolbar-in 0.15s ease-out',
     ...(persistent ? {
+      // Above document chrome, below compact navigation/task panels (90).
+      zIndex: 80,
       top: 'auto',
       bottom: 'max(12px, var(--pn-safe-bottom, env(safe-area-inset-bottom, 0px)))',
       left: 'calc(var(--pn-viewport-offset-left, 0px) + var(--pn-viewport-width, 100vw) / 2)',
