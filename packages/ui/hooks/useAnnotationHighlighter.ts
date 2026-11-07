@@ -781,6 +781,8 @@ export interface UseAnnotationHighlighterOptions {
    * from this hook's state. Absent: unchanged.
    */
   onHostDraft?: (draft: HostDraft | null) => void;
+  /** Keep the browser selection until a persistent touch toolbar action. */
+  nativeSelection?: boolean;
 }
 
 /** The outcome of one `applyAnnotations` pass. */
@@ -850,6 +852,7 @@ export interface UseAnnotationHighlighterReturn {
   applyAnnotations: (annotations: Annotation[]) => void;
   /** For a host that composes on a touch screen: the page selection as a draft now (see `ViewerHandle.takeSelection`). */
   takeSelection?: () => boolean;
+  prepareSelectionAction?: () => boolean;
 }
 
 /**
@@ -870,6 +873,7 @@ export function useAnnotationHighlighter({
   onRestoreMismatch,
   onRestoreReport,
   onHostDraft,
+  nativeSelection = false,
 }: UseAnnotationHighlighterOptions): UseAnnotationHighlighterReturn {
   const highlighterRef = useRef<Highlighter | null>(null);
   const modeRef = useRef<EditorMode>(mode);
@@ -888,6 +892,12 @@ export function useAnnotationHighlighter({
   const pendingRangeRunsRef = useRef<RangeTextPiece[] | null>(null);
 
   const [toolbarState, setToolbarState] = useState<ToolbarState | null>(null);
+  // CREATE fires synchronously; toolbar actions must use its source before
+  // React renders the state update from taking the native selection.
+  const capturedToolbarRef = useRef<ToolbarState | null>(null);
+  const nativeSelectionRef = useRef(nativeSelection);
+  nativeSelectionRef.current = nativeSelection;
+  const setPointerListeningRef = useRef<(active: boolean) => void>(() => {});
   const [commentPopover, setCommentPopover] = useState<CommentPopoverState | null>(null);
   const [quickLabelPicker, setQuickLabelPicker] = useState<QuickLabelPickerState | null>(null);
 
@@ -902,6 +912,7 @@ export function useAnnotationHighlighter({
 
   const clearPendingSelection = useCallback(() => {
     pendingSourceRef.current = null;
+    capturedToolbarRef.current = null;
     pendingMathTargetsRef.current = [];
     // Strip the pre-submission preview highlight if the annotation was never
     // finalized (createAnnotationFromMathSource nulls this ref once committed).
@@ -925,6 +936,12 @@ export function useAnnotationHighlighter({
   hostComposesRef.current = onHostDraft !== undefined;
   const takeTouchSelectionRef = useRef<() => boolean>(() => false);
   const takeSelection = useCallback(() => takeTouchSelectionRef.current(), []);
+  const prepareSelectionAction = () => {
+    if (!nativeSelection) return true;
+    if (pendingSourceRef.current) return true;
+    capturedToolbarRef.current = null;
+    return takeTouchSelectionRef.current() && capturedToolbarRef.current !== null;
+  };
 
   // Track mouse position for quick label picker
   useEffect(() => {
@@ -1157,6 +1174,9 @@ export function useAnnotationHighlighter({
     if (!newAnnotation) return;
     const mathTargets = pendingMathTargetsRef.current;
 
+    if (nativeSelectionRef.current) {
+      highlighter.getDoms(source.id)?.forEach((dom: HTMLElement) => dom.classList.remove('native-selection-pending'));
+    }
     if (type === AnnotationType.DELETION) {
       highlighter.addClass('deletion', source.id);
     } else if (type === AnnotationType.COMMENT) {
@@ -1665,7 +1685,7 @@ export function useAnnotationHighlighter({
             pendingSourceRef.current = source;
             const marks = [...doms] as HTMLElement[];
             const selectionText = source.text;
-            setToolbarState({
+            const toolbar: ToolbarState = {
               element: doms[0] as HTMLElement,
               source,
               selectionText,
@@ -1681,7 +1701,14 @@ export function useAnnotationHighlighter({
                 range.setEndAfter(last);
                 return richCopySourceFromRange(range, selectionText);
               },
-            });
+            };
+            capturedToolbarRef.current = toolbar;
+            if (nativeSelectionRef.current) {
+              // Pending anchors are structural only on touch. Committed
+              // comments and deletions retain their usual appearance.
+              doms.forEach((dom: HTMLElement) => dom.classList.add('native-selection-pending'));
+            }
+            setToolbarState(toolbar);
           }
         }
       }
@@ -1696,6 +1723,7 @@ export function useAnnotationHighlighter({
     // runs: registered on the capture phase of the same element, and before
     // `run()` so registration order settles the at-target case too.
     const handlePointerEndCapture = () => {
+      if (nativeSelectionRef.current) return;
       const container = containerRef.current;
       const selection = window.getSelection();
       if (!container || !selection || selection.isCollapsed || selection.rangeCount === 0) {
@@ -1728,7 +1756,7 @@ export function useAnnotationHighlighter({
           highlighter.stop();
           listening = false;
           window.setTimeout(() => {
-            if (disposed) return;
+            if (disposed || nativeSelectionRef.current) return;
             highlighter.run();
             listening = true;
           }, 0);
@@ -1761,10 +1789,15 @@ export function useAnnotationHighlighter({
     // person chooses its Comment (takeSelection); the library painting it at
     // touchend would end the system selection and its edit menu first.
     const isTouchPrimary = window.matchMedia(TOUCH_PRIMARY_QUERY).matches;
-    if (!(isTouchPrimary && hostComposesRef.current)) {
-      highlighter.run();
-      listening = true;
-    }
+    const setPointerListening = (active: boolean) => {
+      const shouldListen = active && !(isTouchPrimary && hostComposesRef.current);
+      if (shouldListen === listening) return;
+      if (shouldListen) highlighter.run();
+      else highlighter.stop();
+      listening = shouldListen;
+    };
+    setPointerListeningRef.current = setPointerListening;
+    setPointerListening(!nativeSelectionRef.current);
 
     const handleMathMouseDown = (event: MouseEvent) => {
       mouseDownMathRef.current = closestMathElement(event.target as Node, containerRef.current);
@@ -1774,6 +1807,7 @@ export function useAnnotationHighlighter({
     };
 
     const handleMathMouseUp = (event: MouseEvent) => {
+      if (nativeSelectionRef.current) return;
       if (!containerRef.current) return;
 
       const selection = window.getSelection();
@@ -1861,6 +1895,7 @@ export function useAnnotationHighlighter({
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
       if (!containerRef.current?.contains(sel.anchorNode)) return false;
       const range = sel.getRangeAt(0).cloneRange();
+      if (!containerRef.current.contains(range.commonAncestorContainer)) return false;
       // Nothing to annotate there: the system selection and its copy menu stay the person's.
       if (rangeInsideExcluded(containerRef.current, range)) return false;
       // Same fail-closed rule as the pointer-end guard (#881): touch
@@ -1871,6 +1906,7 @@ export function useAnnotationHighlighter({
       pendingRangeRunsRef.current = rangeTextPieces(range);
       try {
         highlighter.fromRange(range);
+        if (nativeSelectionRef.current) sel.removeAllRanges();
         return true;
       } catch (error) {
         pendingRangeRunsRef.current = null;
@@ -1883,7 +1919,30 @@ export function useAnnotationHighlighter({
       ? () => {
           clearTimeout(selectionTimer);
           if (hostComposesRef.current) return;
-          selectionTimer = setTimeout(takeTouchSelection, TOUCH_SELECTION_SETTLE_MS);
+          if (nativeSelectionRef.current) {
+            if (pendingSourceRef.current) return;
+            const selection = window.getSelection();
+            const root = containerRef.current;
+            const range = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+            if (!root || !selection || !range || selection.isCollapsed
+              || !root.contains(range.commonAncestorContainer)
+              || rangeInsideExcluded(root, range) || isBlankQuote(selection.toString())
+              || !isSerializableRange(range)) {
+              setToolbarState(null);
+              return;
+            }
+            const selectionText = selection.toString();
+            setToolbarState({
+              element: elementFromNode(range.startContainer) ?? root,
+              source: null,
+              selectionText,
+              getRichCopy: () => richCopySourceFromRange(range, selectionText),
+            });
+            return;
+          }
+          selectionTimer = setTimeout(() => {
+            if (!nativeSelectionRef.current) takeTouchSelection();
+          }, TOUCH_SELECTION_SETTLE_MS);
         }
       : null;
 
@@ -1901,9 +1960,16 @@ export function useAnnotationHighlighter({
       container.removeEventListener('mouseup', handlePointerEndCapture, true);
       container.removeEventListener('touchend', handlePointerEndCapture, true);
       disposed = true;
+      setPointerListeningRef.current = () => {};
       highlighter.dispose();
     };
   }, [clearPendingSelection, enabled]);
+
+  // Mode switches change pointer capture without disposing saved highlights.
+  useEffect(() => {
+    setPointerListeningRef.current(!nativeSelection);
+    if (!nativeSelection) setToolbarState(current => current?.source === null ? null : current);
+  }, [nativeSelection, enabled]);
 
   const highlightRange = useCallback((range: Range, modeOverride?: EditorMode) => {
     const highlighter = highlighterRef.current;
@@ -2069,7 +2135,9 @@ export function useAnnotationHighlighter({
 
   // --- Handlers ---
 
+  const currentActionToolbar = () => nativeSelection ? capturedToolbarRef.current : toolbarState;
   const handleAnnotate = (type: AnnotationType) => {
+    const toolbarState = currentActionToolbar();
     const highlighter = highlighterRef.current;
     if (!toolbarState) return;
     if (isMathAnnotationSource(toolbarState.source)) {
@@ -2087,6 +2155,7 @@ export function useAnnotationHighlighter({
   };
 
   const handleQuickLabel = (label: QuickLabel) => {
+    const toolbarState = currentActionToolbar();
     const highlighter = highlighterRef.current;
     if (!toolbarState) return;
     if (isMathAnnotationSource(toolbarState.source)) {
@@ -2110,7 +2179,7 @@ export function useAnnotationHighlighter({
   };
 
   const handleToolbarClose = () => {
-    if (toolbarState && highlighterRef.current && !isMathAnnotationSource(toolbarState.source)) {
+    if (toolbarState?.source?.id && highlighterRef.current && !isMathAnnotationSource(toolbarState.source)) {
       highlighterRef.current.remove(toolbarState.source.id);
     }
     clearPendingSelection();
@@ -2119,6 +2188,7 @@ export function useAnnotationHighlighter({
   };
 
   const handleRequestComment = (initialChar?: string) => {
+    const toolbarState = currentActionToolbar();
     if (!toolbarState) return;
     setCommentPopover({
       anchorEl: toolbarState.element,
@@ -2294,5 +2364,6 @@ export function useAnnotationHighlighter({
     clearAllHighlights,
     applyAnnotations: applyAnnotationsInternal,
     takeSelection,
+    prepareSelectionAction,
   };
 }

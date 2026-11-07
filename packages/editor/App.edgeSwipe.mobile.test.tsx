@@ -158,8 +158,10 @@ describe.if(hasDom)('mobile edge swipes in real app shells', () => {
       const panel = navigation(mode)!;
       const viewport = Array.from(panel.querySelectorAll<HTMLElement>('div')).find(el => el.style.overflowY === 'auto');
       expect(viewport).toBeDefined();
-      viewport!.scrollTop = 320;
-      viewport!.dispatchEvent(new Event('scroll'));
+      await act(async () => {
+        viewport!.scrollTop = 320;
+        viewport!.dispatchEvent(new Event('scroll'));
+      });
       await swipe('left', panel, true);
       await act(async () => { await new Promise(resolve => setTimeout(resolve, PANEL_TRANSITION_MS + 30)); });
       expect(panel.isConnected).toBe(false);

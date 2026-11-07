@@ -707,6 +707,7 @@
     --pn-safe-bottom: env(safe-area-inset-bottom, 0px);
     --pn-safe-left: env(safe-area-inset-left, 0px);
     --pn-touch-target: 2.75rem;
+    --pn-selection-toolbar-target: 2.25rem;
     --surface-0: color-mix(in oklch, var(--muted) 40%, var(--background));
     --surface-1: var(--muted);
     --surface-2: color-mix(in oklch, var(--muted) 70%, var(--foreground));
@@ -1061,7 +1062,7 @@ html:has([data-pn-compact-touch-layout='true'])
  * actions a mis-tap apart. Space them only inside the compact scope. */
 html:has([data-pn-compact-touch-layout='true'])
   [data-pn-annotation-toolbar-row] {
-  gap: 0.5rem;
+  gap: var(--pn-annotation-toolbar-gap, 0.5rem);
 }
 
 /* Percentages in translate use the toolbar's own width. Correct only its
@@ -1451,6 +1452,41 @@ html.pn-theme-switching *::after {
   border-radius: 2px;
   padding: 0 2px;
   margin: 0 -2px;
+}
+
+/* On touch, pending marks only hold the eventual annotation's anchor. */
+.annotation-highlight.native-selection-pending {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+}
+
+[data-pn-native-selection-toolbar] {
+  --pn-touch-target: var(--pn-selection-toolbar-target, 36px);
+  --pn-annotation-toolbar-gap: 0.25rem;
+}
+
+[data-pn-native-selection-toolbar] button[data-pn-touch-target-icon] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The final page action sits outside the article. Keep one toolbar height
+ * after ALL scrollable content, so that action can scroll above the dock. */
+[data-pn-selection-toolbar-spacer] {
+  display: none;
+}
+
+body:has([data-pn-native-selection-toolbar]) [data-pn-selection-toolbar-spacer] {
+  display: block;
+  height: calc(var(--pn-selection-toolbar-target, 36px) + 10px);
+  flex-shrink: 0;
+}
+
+[data-pn-native-selection-toolbar][aria-disabled='true'] button {
+  opacity: 0.45;
 }
 
 .annotation-highlight.deletion {

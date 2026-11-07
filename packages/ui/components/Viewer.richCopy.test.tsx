@@ -69,6 +69,7 @@ async function mountAndSelect(phrase: string): Promise<void> {
     );
   });
   await settle();
+  expect(!!document.querySelector('.annotation-toolbar')).toBe(false);
   const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
   let node: Text | null = null;
   for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.textContent?.includes(phrase)) node = n as Text;
@@ -108,6 +109,14 @@ test.skipIf(!hasDom)('a @plannotator/ui host that does not opt in keeps the tool
   await mountAndSelect('four and eight');
   expect(document.querySelector('.annotation-toolbar')).not.toBeNull();
   expect(toolbarButton('Copy')).toBeUndefined();
+  expect(!!document.querySelector('[data-pn-native-selection-toolbar]')).toBe(false);
+  expect(host!.querySelector('article')!.style.paddingBottom).toBe('');
+  const cancel = toolbarButton('Cancel');
+  expect(cancel).toBeDefined();
+  await act(async () => { cancel!.click(); });
+  await settle();
+  expect(!!document.querySelector('.annotation-toolbar')).toBe(false);
+  expect(!!host!.querySelector('mark')).toBe(false);
 });
 
 test.skipIf(!hasDom)('the toolbar button copies the selection as text/html plus text/plain, without review markup', async () => {

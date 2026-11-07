@@ -8173,6 +8173,7 @@ const App: React.FC = () => {
                   onOpenReview={() => openCompactPlanSurface('review')}
                 />
               )}
+              <div data-pn-selection-toolbar-spacer data-print-hide aria-hidden="true" />
             </div>
           </OverlayScrollArea>
 

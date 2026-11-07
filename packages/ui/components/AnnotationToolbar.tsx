@@ -11,7 +11,7 @@ import { FloatingSelectionActionsPicker } from "./SelectionActionsDropdown";
 import { buildSelectionActionContext, type SelectionAction } from "../utils/selectionActions";
 import { HostTitle } from './HostTitle';
 
-type PositionMode = 'center-above' | 'top-right';
+type PositionMode = 'center-above' | 'top-right' | 'bottom';
 
 const isEditableElement = (node: EventTarget | Element | null): boolean => {
   if (!(node instanceof Element)) return false;
@@ -21,6 +21,9 @@ const isEditableElement = (node: EventTarget | Element | null): boolean => {
 };
 
 interface AnnotationToolbarProps {
+  /** Take a live native selection only when a mutation action is invoked. */
+  prepareAction?: () => boolean;
+  inactive?: boolean;
   element: HTMLElement;
   positionMode: PositionMode;
   onAnnotate: (type: AnnotationType) => void;
@@ -93,7 +96,13 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
   isExiting = false,
   onMouseEnter,
   onMouseLeave,
+  prepareAction,
+  inactive = false,
 }) => {
+  const persistent = positionMode === 'bottom';
+  const runAction = (action: () => void) => {
+    if (!prepareAction || prepareAction()) action();
+  };
   const [position, setPosition] = useState<{ top: number; left?: number; right?: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const [richCopied, setRichCopied] = useState<RichCopyOutcome | false>(false);
@@ -140,6 +149,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
     }
     if (await copyTextToClipboard(textToCopy)) {
       setCopied(true);
+      if (persistent) onClose();
       setTimeout(() => setCopied(false), 1500);
     }
   };
@@ -154,6 +164,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
     if (current.element !== element || current.getRichCopy !== build) return;
     if (result) {
       setRichCopied(result);
+      if (persistent) onClose();
       if (richCopyTimeoutRef.current !== null) clearTimeout(richCopyTimeoutRef.current);
       richCopyTimeoutRef.current = setTimeout(() => {
         setRichCopied(false);
@@ -165,6 +176,10 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
   // Update position on scroll/resize
   useEffect(() => {
     const updatePosition = () => {
+      if (persistent) {
+        setPosition({ top: 0, left: window.innerWidth / 2 });
+        return;
+      }
       const rect = element.getBoundingClientRect();
 
       if (closeOnScrollOut && (rect.bottom < 0 || rect.top > window.innerHeight)) {
@@ -197,6 +212,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
 
   // Type-to-comment + Alt+N / bare digit quick label shortcuts
   useEffect(() => {
+    if (persistent) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing) return;
       if (isEditableElement(e.target) || isEditableElement(document.activeElement)) return;
@@ -240,10 +256,10 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
       window.removeEventListener("keydown", handleKeyDown);
       releaseCapture();
     };
-  }, [onClose, onRequestComment, onQuickLabel, quickLabels, quickLabelsOpen, selectionActionsOpen, commentOnly, quickLabelsEnabled]);
+  }, [onClose, onRequestComment, onQuickLabel, quickLabels, quickLabelsOpen, selectionActionsOpen, commentOnly, quickLabelsEnabled, persistent]);
 
   useDismissOnOutsideAndEscape({
-    enabled: !quickLabelsOpen && !selectionActionsOpen,
+    enabled: !persistent && !quickLabelsOpen && !selectionActionsOpen,
     ref: toolbarRef,
     onDismiss: onClose,
   });
@@ -270,15 +286,28 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
     animation: isExiting
       ? 'annotation-toolbar-out 0.15s ease-in forwards'
       : 'annotation-toolbar-in 0.15s ease-out',
+    ...(persistent ? {
+      top: 'auto',
+      bottom: 'max(12px, var(--pn-safe-bottom, env(safe-area-inset-bottom, 0px)))',
+      left: 'calc(var(--pn-viewport-offset-left, 0px) + var(--pn-viewport-width, 100vw) / 2)',
+      maxWidth: 'calc(var(--pn-viewport-width, 100vw) - 24px)',
+      overflowX: 'auto',
+    } : {}),
   };
 
   return createPortal(
     <div
       ref={toolbarRef}
-      data-pn-annotation-toolbar-centered={isCentered ? 'true' : undefined}
+      data-pn-annotation-toolbar-centered={isCentered && !persistent ? 'true' : undefined}
+      data-pn-native-selection-toolbar={persistent ? 'true' : undefined}
+      aria-disabled={inactive || undefined}
       className="annotation-toolbar fixed z-[100] bg-popover border border-border rounded-lg shadow-2xl"
       style={style}
-      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => { if (persistent) e.preventDefault(); }}
+      onClickCapture={(e) => {
+        if (inactive) { e.preventDefault(); e.stopPropagation(); }
+      }}
+      onMouseDown={(e) => { e.stopPropagation(); if (persistent) e.preventDefault(); }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
@@ -293,7 +322,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
         }
       `}</style>
       <div data-pn-annotation-toolbar-row="true" className="flex items-center p-1 gap-0.5">
-        {(!hideCopyButton || getRichCopy) && (
+        {!persistent && (!hideCopyButton || getRichCopy) && (
           <>
             {getRichCopy ? (
               // One Copy button: rich text (text/html plus text/plain) where
@@ -320,14 +349,14 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
         )}
         {!commentOnly && (
           <ToolbarButton
-            onClick={() => handleTypeSelect(AnnotationType.DELETION)}
+            onClick={() => runAction(() => handleTypeSelect(AnnotationType.DELETION))}
             icon={<TrashIcon />}
             label="Delete"
             className="text-destructive hover:bg-destructive/10"
           />
         )}
         <ToolbarButton
-          onClick={() => handleTypeSelect(AnnotationType.COMMENT)}
+          onClick={() => runAction(() => handleTypeSelect(AnnotationType.COMMENT))}
           icon={<CommentIcon />}
           label="Comment"
           className="text-annotation-comment hover:bg-annotation-comment/10"
@@ -335,7 +364,12 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
         {hasSelectionActions && (
           <ToolbarButton
             ref={actionsButtonRef}
-            onClick={() => setShowSelectionActions(prev => !prev)}
+            onClick={() => {
+              if (selectionActionsOpen) {
+                setShowSelectionActions(false);
+                if (persistent) onClose();
+              } else runAction(() => setShowSelectionActions(true));
+            }}
             icon={selectionActionsIcon ?? <WandIcon />}
             label="Actions"
             className={selectionActionsOpen ? "text-primary bg-primary/10" : "text-primary hover:bg-primary/10"}
@@ -357,7 +391,10 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
               action.onSelect(buildSelectionActionContext(element, actionText));
               onClose();
             }}
-            onDismiss={() => setShowSelectionActions(false)}
+            onDismiss={() => {
+              setShowSelectionActions(false);
+              if (persistent) onClose();
+            }}
           />
         )}
         {onQuickLabel && (
@@ -365,14 +402,19 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
             {!commentOnly && quickLabelsEnabled && (
               <ToolbarButton
                 ref={zapButtonRef}
-                onClick={() => setShowQuickLabels(prev => !prev)}
+                onClick={() => {
+                  if (quickLabelsOpen) {
+                    setShowQuickLabels(false);
+                    if (persistent) onClose();
+                  } else runAction(() => setShowQuickLabels(true));
+                }}
                 icon={<ZapIcon />}
                 label="Quick label"
                 className={showQuickLabels ? "text-amber-500 bg-amber-500/10" : "text-amber-500 hover:bg-amber-500/10"}
               />
             )}
             <ToolbarButton
-              onClick={() => onQuickLabel(THUMBS_UP_LABEL)}
+              onClick={() => runAction(() => onQuickLabel(THUMBS_UP_LABEL))}
               icon={<span className="block w-4 h-4 text-sm leading-4 text-center">👍</span>}
               label="Looks good"
               className="hover:bg-green-500/10"
@@ -384,18 +426,25 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
                   setShowQuickLabels(false);
                   onQuickLabel(label);
                 }}
-                onDismiss={() => setShowQuickLabels(false)}
+                onDismiss={() => {
+                  setShowQuickLabels(false);
+                  if (persistent) onClose();
+                }}
               />
             )}
           </>
         )}
-        <div className="w-px h-5 bg-border mx-0.5" />
-        <ToolbarButton
-          onClick={onClose}
-          icon={<CloseIcon />}
-          label="Cancel"
-          className="text-muted-foreground hover:bg-muted"
-        />
+        {!persistent && (
+          <>
+            <div className="w-px h-5 bg-border mx-0.5" />
+            <ToolbarButton
+              onClick={onClose}
+              icon={<CloseIcon />}
+              label="Cancel"
+              className="text-muted-foreground hover:bg-muted"
+            />
+          </>
+        )}
       </div>
     </div>,
     document.body

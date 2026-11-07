@@ -5,14 +5,6 @@ import type { SourceSaveCapability } from "@plannotator/core/source-save";
 
 const hasDom = typeof document !== "undefined";
 
-if (hasDom) {
-  document.cookie = "plannotator-look-feel-announcement-seen=2; path=/";
-  document.cookie = "plannotator-announce-tui-herdr-seen=1; path=/";
-  document.cookie = "plannotator-announce-inbox-seen=1; path=/";
-  document.cookie = "plannotator-vim-mode-announcement-seen=2; path=/";
-  document.cookie = "plannotator-plan-ai-announcement-seen=1; path=/";
-}
-
 const storageModule = hasDom ? await import("@plannotator/ui/utils/storage") : null;
 const fileTreeModule = hasDom ? await import("@plannotator/ui/hooks/useFileBrowser") : null;
 const appModule = hasDom ? await import("./App") : null;
@@ -84,6 +76,14 @@ function configureNotesApps(): void {
   noteSettings.set("plannotator-octarine-enabled", "true");
   noteSettings.set("plannotator-octarine-workspace", "TestWorkspace");
   noteSettings.set("plannotator-default-notes-app", "obsidian");
+  // Per-test settings backend: no module-scope cookies leak into other mobile tests.
+  for (const [key, value] of Object.entries({
+    'plannotator-look-feel-announcement-seen': '2',
+    'plannotator-announce-tui-herdr-seen': '1',
+    'plannotator-announce-inbox-seen': '1',
+    'plannotator-vim-mode-announcement-seen': '2',
+    'plannotator-plan-ai-announcement-seen': '1',
+  })) noteSettings.set(key, value);
 }
 
 function useCompactTouchMedia(): void {
@@ -112,12 +112,12 @@ function useSingleFileTree(): void {
 
 function findButton(label: string): HTMLButtonElement | undefined {
   return Array.from(document.querySelectorAll("button"))
-    .find((button) => button.textContent?.trim() === label);
+    .find((button) => !button.closest('[inert], [aria-hidden="true"]') && button.textContent?.trim() === label);
 }
 
 function findButtonContaining(label: string): HTMLButtonElement | undefined {
   return Array.from(document.querySelectorAll("button"))
-    .find((button) => button.textContent?.includes(label));
+    .find((button) => !button.closest('[inert], [aria-hidden="true"]') && button.textContent?.includes(label));
 }
 
 function responseFor(planResponse: PlanResponse): typeof fetch {
@@ -370,6 +370,12 @@ describe.if(hasDom)("App document permissions", () => {
     await act(async () => findButtonContaining("Select text")?.click());
     expect(document.querySelector("[data-pn-compact-annotate-entry]")?.textContent).toContain("Select text");
     expect(noteSettings.get("plannotator-input-method")).toBe("pinpoint");
+    const selectionToolbar = document.querySelector('[data-pn-native-selection-toolbar]');
+    expect(!!selectionToolbar).toBe(true);
+    // Deliberate mobile action set: Copy and Cancel belong to the native selection UI.
+    expect([...selectionToolbar!.querySelectorAll<HTMLButtonElement>('button')]
+      .map(button => button.getAttribute('aria-label') ?? button.title))
+      .toEqual(['Delete', 'Comment', 'Quick label', 'Looks good']);
 
     const optionsButton = document.querySelector<HTMLButtonElement>('button[aria-label="Options"]');
     if (!optionsButton) throw new Error("Options menu trigger did not render");
@@ -385,16 +391,17 @@ describe.if(hasDom)("App document permissions", () => {
     expect(findButtonContaining("Edit document")).not.toBeUndefined();
 
     await act(async () => findButtonContaining("Annotations")?.click());
-    expect(document.querySelector('[data-pn-compact-plan-stage="true"]')?.getAttribute("aria-label")).toBe("Annotations");
+    expect(document.querySelector('[data-pn-compact-plan-stage="true"]:not([aria-hidden="true"])')?.getAttribute("aria-label")).toBe("Annotations");
     expect(document.body.textContent).toContain("No annotations yet");
     const closeAnnotations = document.querySelector<HTMLButtonElement>('button[aria-label="Close Annotations"]');
     if (!closeAnnotations) throw new Error("Compact Annotations close control did not render");
     await act(async () => closeAnnotations.click());
-    expect(document.querySelector('[data-pn-compact-plan-stage="true"]')).toBeNull();
+    // Closing panels remain mounted for their exit animation, but stop being interactive immediately.
+    expect(!!document.querySelector('[data-pn-compact-plan-stage="true"]:not([aria-hidden="true"])')).toBe(false);
 
     await act(async () => optionsButton.click());
     await act(async () => findButtonContaining("Ask AI")?.click());
-    expect(document.querySelector('[data-pn-compact-plan-stage="true"]')?.getAttribute("aria-label")).toBe("Ask AI");
+    expect(document.querySelector('[data-pn-compact-plan-stage="true"]:not([aria-hidden="true"])')?.getAttribute("aria-label")).toBe("Ask AI");
     expect(document.querySelector('textarea[placeholder="Ask about this document..."]')?.getAttribute("data-pn-mobile-editable")).toBe("true");
     const closeAI = document.querySelector<HTMLButtonElement>('button[aria-label="Close Ask AI"]');
     if (!closeAI) throw new Error("Compact Ask AI close control did not render");
@@ -405,7 +412,7 @@ describe.if(hasDom)("App document permissions", () => {
     const reviewTrigger = document.querySelector<HTMLButtonElement>("#pn-compact-plan-review-trigger");
     if (!reviewTrigger) throw new Error("End-of-document review trigger did not render");
     await act(async () => reviewTrigger.click());
-    expect(document.querySelector('[data-pn-compact-plan-stage="true"]')?.getAttribute("aria-label")).toBe("Review");
+    expect(document.querySelector('[data-pn-compact-plan-stage="true"]:not([aria-hidden="true"])')?.getAttribute("aria-label")).toBe("Review");
     expect(findButton("Close session")).not.toBeUndefined();
     expect(findButton("Approve")).not.toBeUndefined();
     const closeReview = document.querySelector<HTMLButtonElement>('button[aria-label="Close Review"]');
@@ -495,7 +502,9 @@ describe.if(hasDom)("App document permissions", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(document.querySelector("[data-pn-plan-navigator]")).toBeNull();
+    expect(!!document.querySelector('[data-pn-plan-navigator]:not([aria-hidden="true"])')).toBe(false);
+    expect(pendingNavigator?.getAttribute('aria-hidden')).toBe('true');
+    expect(pendingNavigator?.hasAttribute('inert')).toBe(true);
     expect(document.body.textContent).toContain("Selected file");
     expect(document.querySelector("[data-pn-compact-document-title]")?.textContent).toBe("alpha.md");
   });

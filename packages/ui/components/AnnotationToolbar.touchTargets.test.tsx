@@ -5,11 +5,10 @@ import { AnnotationToolbar } from './AnnotationToolbar';
 import { AnnotationType } from '../types';
 
 /**
- * The selection toolbar is the primary annotate control on a phone, but its
- * buttons never got the touch-target markers the rest of the stack uses, so
- * they stayed 28x28 inside the compact scope. theme.css sizes marked controls
- * to var(--pn-touch-target) there and the markers are inert everywhere else,
- * so this pins the markup contract the stylesheet depends on.
+ * The persistent phone toolbar keeps four annotation actions and no Copy or
+ * Cancel, even when rich copy is enabled. Floating toolbars retain their
+ * existing touch markers and dismiss action for desktop and pinpoint flows.
+ * Pixel sizes and centered icons are exercised by the browser proof.
  */
 
 const hasDom = typeof document !== 'undefined';
@@ -28,7 +27,7 @@ afterEach(async () => {
 });
 
 describe.if(hasDom)('AnnotationToolbar touch targets', () => {
-  test('every action carries the icon touch-target markers', async () => {
+  test('the bottom toolbar offers only the four mobile actions, with touch targets', async () => {
     anchor = document.createElement('p');
     anchor.textContent = 'annotated paragraph';
     document.body.appendChild(anchor);
@@ -40,7 +39,8 @@ describe.if(hasDom)('AnnotationToolbar touch targets', () => {
       root?.render(
         <AnnotationToolbar
           element={anchor!}
-          positionMode="center-above"
+          positionMode="bottom"
+          getRichCopy={() => ({ html: '<p>selection</p>', text: 'selection' })}
           onAnnotate={() => {}}
           onClose={() => {}}
           onRequestComment={() => {}}
@@ -53,7 +53,10 @@ describe.if(hasDom)('AnnotationToolbar touch targets', () => {
     if (!toolbar) throw new Error('annotation toolbar did not render');
 
     const buttons = Array.from(toolbar.querySelectorAll<HTMLButtonElement>('button'));
-    expect(buttons.length).toBeGreaterThan(0);
+    // Deliberate action names: these four actions are the mobile product contract.
+    expect(buttons.map(button => button.getAttribute('aria-label') ?? button.title))
+      .toEqual(['Delete', 'Comment', 'Quick label', 'Looks good']);
+    expect(toolbar.getAttribute('data-pn-native-selection-toolbar')).toBe('true');
     for (const button of buttons) {
       expect(button.getAttribute('data-pn-touch-target')).toBe('true');
       expect(button.getAttribute('data-pn-touch-target-icon')).toBe('true');
@@ -63,7 +66,7 @@ describe.if(hasDom)('AnnotationToolbar touch targets', () => {
     expect(toolbar.querySelector('[data-pn-annotation-toolbar-row]')).not.toBeNull();
   });
 
-  test('the actions still fire', async () => {
+  test('the floating toolbar retains Delete and Cancel', async () => {
     anchor = document.createElement('p');
     anchor.textContent = 'annotated paragraph';
     document.body.appendChild(anchor);

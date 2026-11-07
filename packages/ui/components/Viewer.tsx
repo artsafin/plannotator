@@ -983,6 +983,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
     [annotations, hostQuestionAnswers],
   );
   const isTouchDevice = useMemo(() => window.matchMedia('(pointer: coarse)').matches, []);
+  const nativeSelectionToolbar = isTouchDevice && mode === 'selection' && inputMethod !== 'pinpoint' && !hostComposes;
   const [codeBlockToolbar, setCodeBlockToolbar] =
     useState<CodeBlockToolbarTarget | null>(null);
   const [isCodeBlockToolbarExiting, setIsCodeBlockToolbarExiting] = useState(false);
@@ -1039,6 +1040,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
     clearAllHighlights,
     applyAnnotations,
     takeSelection,
+    prepareSelectionAction,
   } = useAnnotationHighlighter({
     containerRef,
     annotations,
@@ -1047,6 +1049,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
     selectedAnnotationId,
     mode,
     enabled: selectionCommentsOn,
+    nativeSelection: nativeSelectionToolbar,
     // Markdown documents drift between the moment a draft/share is written and
     // the moment it is restored (a plan revision, a re-rendered block, a
     // renderer change that adds or drops elements — #1509 hoisted an alert's
@@ -1310,10 +1313,10 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
     setIsCodeBlockToolbarExiting(false);
   }, [vimOwnsDocumentNavigation]);
 
-  // Suppress native context menu on touch devices (prevents cut/copy/paste overlay on mobile)
+  // Selection mode leaves the system menu and selection handles to the browser.
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !isTouchDevice) return;
+    if (!container || !isTouchDevice || mode === 'selection') return;
 
     const handleContextMenu = (e: Event) => {
       e.preventDefault();
@@ -1321,7 +1324,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
 
     container.addEventListener('contextmenu', handleContextMenu);
     return () => container.removeEventListener('contextmenu', handleContextMenu);
-  }, []);
+  }, [isTouchDevice, mode]);
 
   // Detect when sticky action bar is "stuck" to show card background.
   // The IntersectionObserver root must be the actual scroll element — the
@@ -1754,7 +1757,10 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
         onMouseDown={vim.onMouseDown}
         className={`w-full bg-card rounded-xl py-5 md:py-8 lg:py-10 xl:py-12 relative ${fillHeight ? 'flex-1 ' : ''}${gridEnabled ? 'px-5 md:px-8 lg:px-10 xl:px-12 shadow-xl border border-border/50' : ''} ${inputMethod === 'pinpoint' ? 'cursor-pointer' : ''}`}
         style={{
-          WebkitTouchCallout: 'none',
+          WebkitTouchCallout: nativeSelectionToolbar ? 'default' : 'none',
+          ...(nativeSelectionToolbar && selectionCommentsOn ? {
+            paddingBottom: 'calc(88px + var(--pn-safe-bottom, env(safe-area-inset-bottom, 0px)))',
+          } : {}),
           ...(vimModeActive ? { outline: 'none' } : {}),
         } as React.CSSProperties}
       >
@@ -2035,11 +2041,13 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
         ))}
 
         {/* Text selection toolbar */}
-        {selectionCommentsOn && !hostComposes && toolbarState && (
+        {selectionCommentsOn && !hostComposes && (toolbarState || nativeSelectionToolbar) && (
           <ToolbarErrorBoundary>
             <AnnotationToolbar
-              element={toolbarState.element}
-              positionMode="center-above"
+              element={toolbarState?.element ?? containerRef.current ?? document.body}
+              positionMode={nativeSelectionToolbar ? 'bottom' : 'center-above'}
+              inactive={nativeSelectionToolbar && !toolbarState}
+              prepareAction={nativeSelectionToolbar ? prepareSelectionAction : undefined}
               commentOnly={textCommentsOnly || undefined}
               onAnnotate={handleAnnotate}
               onClose={handleToolbarClose}
@@ -2048,10 +2056,10 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(({
               selectionActions={selectionActions}
               selectionActionsIcon={selectionActionsIcon}
               quickLabels={quickLabels}
-              copyText={toolbarState.selectionText}
-              getRichCopy={getRichCopyEnabled() ? toolbarState.getRichCopy : undefined}
+              copyText={toolbarState?.selectionText}
+              getRichCopy={getRichCopyEnabled() ? toolbarState?.getRichCopy : undefined}
               hideCopyButton={!isTouchDevice}
-              closeOnScrollOut
+              closeOnScrollOut={!nativeSelectionToolbar}
             />
           </ToolbarErrorBoundary>
         )}
