@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { sidewaysOwner } from './useSwipeStep';
+import { SWIPE_FLICK_MIN_PX, SWIPE_FLICK_SPEED, sidewaysOwner } from './useSwipeStep';
 
 interface EdgeDrag {
   onMove: (distance: number, closing: boolean) => void;
-  onEnd: (distance: number | null, closing: boolean) => void;
+  onEnd: (distance: number | null, closing: boolean, velocity?: number) => void;
 }
 
 interface EdgeSwipeOptions {
@@ -28,6 +28,7 @@ export function useEdgeSwipe(options: EdgeSwipeOptions): void {
     if (!options.enabled) return;
 
     let gesture: {
+      samples: { x: number; time: number }[];
       id: number;
       x: number;
       y: number;
@@ -66,7 +67,7 @@ export function useEdgeSwipe(options: EdgeSwipeOptions): void {
       const direction = panel ? (side === 'left' ? -1 : 1) : (side === 'left' ? 1 : -1);
       if (sidewaysOwner(path, direction === 1 ? -1 : 1)) return;
       const drag = !panel || panelOptions?.trackDrag ? latest.current.drag?.[side] : undefined;
-      gesture = { id: touch.identifier, x: touch.clientX, y: touch.clientY, side, direction, panel, path, claimed: false, drag };
+      gesture = { samples: [{ x: touch.clientX, time: event.timeStamp }], id: touch.identifier, x: touch.clientX, y: touch.clientY, side, direction, panel, path, claimed: false, drag };
     };
 
     const move = (event: TouchEvent) => {
@@ -74,6 +75,8 @@ export function useEdgeSwipe(options: EdgeSwipeOptions): void {
       if (event.touches.length !== 1 || hasSelection() || hasBlockingModal(gesture.panel)) return reset();
       const touch = event.touches[0];
       if (touch.identifier !== gesture.id) return reset();
+      gesture.samples.push({ x: touch.clientX, time: event.timeStamp });
+      while (gesture.samples.length > 1 && gesture.samples[0].time < event.timeStamp - 100) gesture.samples.shift();
       const dx = (touch.clientX - gesture.x) * gesture.direction;
       const dy = Math.abs(touch.clientY - gesture.y);
       if (!gesture.claimed) {
@@ -94,11 +97,18 @@ export function useEdgeSwipe(options: EdgeSwipeOptions): void {
       if (!touch) return reset();
       gesture = null;
       const dx = (touch.clientX - current.x) * current.direction;
-      if (current.drag) {
-        current.drag.onEnd(Math.max(0, dx), !!current.panel);
+      const sample = current.samples.find(s => s.time >= event.timeStamp - 100);
+      const elapsed = sample ? event.timeStamp - sample.time : 0;
+      const velocity = sample && elapsed > 0 ? (touch.clientX - sample.x) * current.direction / elapsed : 0;
+      if (dx <= Math.abs(touch.clientY - current.y) * 1.5) {
+        current.drag?.onEnd(null, !!current.panel);
         return;
       }
-      if (dx < 48 || dx <= Math.abs(touch.clientY - current.y) * 1.5) return;
+      if (current.drag) {
+        current.drag.onEnd(Math.max(0, dx), !!current.panel, velocity);
+        return;
+      }
+      if (dx < 48 && !(current.panel && dx >= SWIPE_FLICK_MIN_PX && velocity >= SWIPE_FLICK_SPEED)) return;
       const callback = current.panel ? latest.current.panel?.onClose
         : current.side === 'left' ? latest.current.onOpenLeft : latest.current.onOpenRight;
       callback?.();

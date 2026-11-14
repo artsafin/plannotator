@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { SWIPE_FLICK_MIN_PX, SWIPE_FLICK_SPEED } from './useSwipeStep';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion';
 
 type DragFrame = { distance: number; closing: boolean };
@@ -55,11 +56,11 @@ export function usePanelDrag({ selector, onOpen, onClose, onPreview, fallbackWid
           setPhase({ active: true });
         }
       },
-      onEnd: (distance: number | null, closing: boolean) => {
+      onEnd: (distance: number | null, closing: boolean, velocity = 0) => {
         if (distance !== null) {
           const width = element.current?.getBoundingClientRect().width || fallbackWidth?.()
             || window.visualViewport?.width || window.innerWidth;
-          if (distance >= width / 3) (closing ? onClose : onOpen)();
+          if (distance >= width / 3 || (closing && distance >= SWIPE_FLICK_MIN_PX && velocity >= SWIPE_FLICK_SPEED)) (closing ? onClose : onOpen)();
         }
         cancel();
       },

@@ -15,13 +15,14 @@ afterEach(async () => {
   if (hasDom) window.getSelection()?.removeAllRanges();
 });
 
-function touch(target: Element, type: string, x: number, y = 100, fingers = 1) {
+function touch(target: Element, type: string, x: number, y = 100, fingers = 1, time?: number) {
   const point = { identifier: 7, clientX: x, clientY: y };
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperties(event, {
     touches: { value: type === 'touchend' || type === 'touchcancel' ? [] : Array(fingers).fill(point) },
     changedTouches: { value: [point] },
   });
+  if (time !== undefined) Object.defineProperty(event, "timeStamp", { value: time });
   target.dispatchEvent(event);
   return event;
 }
@@ -116,6 +117,16 @@ describe.skipIf(!hasDom)('compact panel edge swipes', () => {
       expect(opened).toEqual([]);
     });
   }
+
+  test('a quick inside flick still closes an open panel', async () => {
+    const { opened, Harness } = await mount();
+    await act(async () => root?.render(<Harness side="right" />));
+    const panel = host!.querySelector('#test-panel p')!;
+    touch(panel, 'touchstart', 200, 100, 1, 0);
+    touch(panel, 'touchmove', 240, 100, 1, 40);
+    touch(panel, 'touchend', 240, 100, 1, 55);
+    expect(opened).toEqual(['closed']);
+  });
 
   test('opening a panel cancels an unfinished edge gesture', async () => {
     const { opened, target, Harness } = await mount();
