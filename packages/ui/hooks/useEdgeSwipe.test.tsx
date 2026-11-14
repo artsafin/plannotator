@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { useEdgeSwipe } from './useEdgeSwipe';
-import { usePanelDrag } from './usePanelDrag';
 
 const hasDom = typeof document !== 'undefined';
 let root: Root | null = null;
@@ -16,14 +15,14 @@ afterEach(async () => {
   if (hasDom) window.getSelection()?.removeAllRanges();
 });
 
-function touch(target: Element, type: string, x: number, y = 100, fingers = 1, time = 0) {
+function touch(target: Element, type: string, x: number, y = 100, fingers = 1, time?: number) {
   const point = { identifier: 7, clientX: x, clientY: y };
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperties(event, {
-    timeStamp: { value: time },
     touches: { value: type === 'touchend' || type === 'touchcancel' ? [] : Array(fingers).fill(point) },
     changedTouches: { value: [point] },
   });
+  if (time !== undefined) Object.defineProperty(event, "timeStamp", { value: time });
   target.dispatchEvent(event);
   return event;
 }
@@ -32,7 +31,7 @@ async function mount() {
   const opened: string[] = [];
   function Harness({ enabled = true, side }: { enabled?: boolean; side?: 'left' | 'right' }) {
     useEdgeSwipe({
-      enabled,
+      enabled, onOpenLeft: () => opened.push('left'), onOpenRight: () => opened.push('right'),
       panel: side ? { side, selector: '#test-panel', onClose: () => opened.push('closed') } : undefined,
     });
     return <main data-pn-compact-touch-layout="true"><p>Review text</p><textarea />
@@ -119,6 +118,16 @@ describe.skipIf(!hasDom)('compact panel edge swipes', () => {
     });
   }
 
+  test('a quick inside flick still closes an open panel', async () => {
+    const { opened, Harness } = await mount();
+    await act(async () => root?.render(<Harness side="right" />));
+    const panel = host!.querySelector('#test-panel p')!;
+    touch(panel, 'touchstart', 200, 100, 1, 0);
+    touch(panel, 'touchmove', 240, 100, 1, 40);
+    touch(panel, 'touchend', 240, 100, 1, 55);
+    expect(opened).toEqual(['closed']);
+  });
+
   test('opening a panel cancels an unfinished edge gesture', async () => {
     const { opened, target, Harness } = await mount();
     touch(target, 'touchstart', 8);
@@ -128,38 +137,16 @@ describe.skipIf(!hasDom)('compact panel edge swipes', () => {
     expect(opened).toEqual([]);
   });
 
-  test('both viewport edges remain browser-owned', async () => {
+  test('opens the corresponding side only after a completed inward edge swipe', async () => {
     const { opened, target } = await mount();
-    for (const [x, end] of [[8, 90], [window.innerWidth - 8, window.innerWidth - 90]]) {
+    for (const [x, end, side] of [[8, 90, 'left'], [window.innerWidth - 8, window.innerWidth - 90, 'right']] as const) {
       touch(target, 'touchstart', x);
-      expect(touch(target, 'touchmove', end).defaultPrevented).toBe(false);
+      expect(touch(target, 'touchmove', end).defaultPrevented).toBe(true);
+      expect(opened).not.toContain(side);
       touch(target, 'touchend', end);
     }
-    expect(opened).toEqual([]);
+    expect(opened).toEqual(['left', 'right']);
   });
-
-  for (const tracked of [false, true]) {
-    test(`short flick closes (tracked=${tracked}), slow drag and paused flick do not`, async () => {
-      const closed: boolean[] = [];
-      function FlickPanel() {
-        const drag = usePanelDrag({ selector: '#flick', onClose: () => closed.push(true), fallbackWidth: () => 300 });
-        useEdgeSwipe({ enabled: true, drag: { left: tracked ? drag.gesture : undefined },
-          panel: { side: 'left', selector: '#flick', trackDrag: tracked, onClose: () => closed.push(true) } });
-        return <section id="flick" data-pn-compact-touch-layout="true"><p>Panel</p></section>;
-      }
-      await mount();
-      await act(async () => root?.render(<FlickPanel />));
-      const panel = host!.querySelector('p')!;
-      for (const [duration, release] of [[200, 200], [50, 300], [50, 60]]) {
-        await act(async () => {
-          touch(panel, 'touchstart', 200, 100, 1, 0);
-          touch(panel, 'touchmove', 160, 100, 1, duration);
-          touch(panel, 'touchend', 160, 100, 1, release);
-        });
-        expect(closed.length).toBe(release === 60 ? 1 : 0);
-      }
-    });
-  }
 
   test('leaves center swipes, vertical scrolling, outward and short drags alone', async () => {
     const { opened, target } = await mount();
